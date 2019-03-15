@@ -99,7 +99,7 @@ void debug_dump(char* ptr, unsigned long size);
 // runtime/app loader
 int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t rt_sz, unsigned long rt_stack_sz, unsigned long* rt_offset);
 
-int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset);
+int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset, unsigned long* user_offset);
 
 // untrusted memory mapper
 int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_ptr, size_t untrusted_size);
@@ -127,6 +127,10 @@ int epm_clean_free_list(epm_t* epm);
 int utm_clean_free_list(utm_t* utm);
 
 vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags);
+size_t epm_alloc_vspace(epm_t* epm, vaddr_t addr, size_t num_pages);
+
+paddr_t epm_va_to_pa(epm_t* epm, vaddr_t addr);
+paddr_t epm_get_free_pa(epm_t* epm);
 vaddr_t epm_alloc_rt_page(epm_t* epm, vaddr_t addr);
 vaddr_t epm_alloc_rt_page_noexec(epm_t* epm, vaddr_t addr);
 vaddr_t epm_alloc_user_page(epm_t* epm, vaddr_t addr);

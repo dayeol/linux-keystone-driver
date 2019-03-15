@@ -4,7 +4,7 @@
 //------------------------------------------------------------------------------
 // Filename: keystone-rtld.c
 // Description: Keystone enclave runtime loader
-// Author: Dayeol Lee <dayeol@berkeley.edu> 
+// Author: Dayeol Lee <dayeol@berkeley.edu>
 
 #include <linux/elf.h>
 #include <linux/binfmts.h>
@@ -23,7 +23,7 @@ void debug_dump(char* ptr, unsigned long size)
   int lineiszero = 1;
 
   pr_info("debug memory dump from virtual address %p (%lu bytes)\n", ptr, size);
-  
+
   for (i=0; i<size; i++) {
     buf[i%16] = ptr[i];
     if(ptr[i] != '\0') {
@@ -39,14 +39,14 @@ void debug_dump(char* ptr, unsigned long size)
           pr_info("*\n");
         allzeroline = 0;
         pr_info("%08x: %04x %04x %04x %04x %04x %04x %04x %04x\n",
-          i-0xf, 
-          *((uint16_t*)&buf[0]), 
-          *((uint16_t*)&buf[2]), 
-          *((uint16_t*)&buf[4]), 
-          *((uint16_t*)&buf[6]), 
-          *((uint16_t*)&buf[8]), 
-          *((uint16_t*)&buf[10]), 
-          *((uint16_t*)&buf[12]), 
+          i-0xf,
+          *((uint16_t*)&buf[0]),
+          *((uint16_t*)&buf[2]),
+          *((uint16_t*)&buf[4]),
+          *((uint16_t*)&buf[6]),
+          *((uint16_t*)&buf[8]),
+          *((uint16_t*)&buf[10]),
+          *((uint16_t*)&buf[12]),
           *((uint16_t*)&buf[14]));
       }
       lineiszero = 1;
@@ -63,7 +63,7 @@ void rtld_setup_stack(epm_t* epm, vaddr_t stack_addr, unsigned long size)
 
   //pr_info("[rt stack] va_start: 0x%lx, va_end: 0x%lx\n", va_start, va_end);
 
-  for(i=0, va=va_start; i< (size>>12); i++, va+=PAGE_SIZE) 
+  for(i=0, va=va_start; i< (size>>12); i++, va+=PAGE_SIZE)
   {
     //pr_info("mapping: %lx\n",va);
     vaddr_t epm_page;
@@ -71,6 +71,18 @@ void rtld_setup_stack(epm_t* epm, vaddr_t stack_addr, unsigned long size)
   }
 }
 
+void rtld_setup_va_chunk(epm_t* epm, vaddr_t addr, unsigned long size)
+{
+  vaddr_t va_start = PAGE_DOWN(addr);
+  vaddr_t va;
+  int i;
+
+  for(i=0, va=va_start; i<(size>>12); i++, va+=PAGE_SIZE)
+  {
+    vaddr_t epm_page;
+    epm_page = epm_alloc_rt_page(epm, va);
+  }
+}
 
 void rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
    void* __user rt_ptr, struct elf_phdr* phdr)
@@ -87,15 +99,15 @@ void rtld_vm_mmap(epm_t* epm, vaddr_t encl_addr, unsigned long size,
   {
     vaddr_t epm_page;
     epm_page = epm_alloc_rt_page(epm, va);
-    //pr_info("encl_mmap va: 0x%lx, target: 0x%lx\n", va, epm_page);
+    //pr_info(" - encl_mmap va: 0x%lx, target: 0x%lx\n", va, epm_page);
     if(copy_from_user((void*)epm_page, rt_ptr + pos, PAGE_SIZE)){
       keystone_err("failed to copy runtime\n");
     }
     pos += PAGE_SIZE;
-   
+
     //debug_dump(epm_page, PAGE_SIZE);
   }
-} 
+}
 
 int keystone_app_load_elf_section_NOBITS(epm_t* epm,
 					 void* target_vaddr, size_t len){
@@ -109,14 +121,14 @@ int keystone_app_load_elf_section_NOBITS(epm_t* epm,
     _size = (k+1)*PAGE_SIZE > len ? len%PAGE_SIZE : PAGE_SIZE;
     memset((void*)encl_page, 0, _size);
   }
- 
+
   return ret;
-  
-  
+
+
 }
 
 int keystone_app_load_elf_region(epm_t* epm, void* __user elf_usr_region,
-				 void* target_vaddr, size_t len){ 
+				 void* target_vaddr, size_t len){
   vaddr_t va;
   vaddr_t encl_page;
   int k, ret = 0;
@@ -136,11 +148,11 @@ int keystone_app_load_elf_region(epm_t* epm, void* __user elf_usr_region,
       break;
     }
   }
- 
+
   return ret;
 }
 
-int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len){
+int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len, unsigned long* user_offset){
   int retval, error, i;
   struct elf_phdr elf_phdr_tmp;
   struct elf_shdr elf_shdr_tmp;
@@ -149,9 +161,10 @@ int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len){
   struct elf_shdr* __user next_usr_shoff;
   unsigned long vaddr;
   unsigned long size = 0;
-  
+  *user_offset = -1UL;
+
   error = -EFAULT;
-  
+
   // TODO safety checks based on len
   if(copy_from_user(&elf_ex, elf_usr_ptr, sizeof(struct elfhdr)) != 0){
     goto out;
@@ -164,6 +177,40 @@ int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len){
   // Sanity check on elf type that its been linked as EXEC
   if(elf_ex.e_type != ET_EXEC || !elf_check_arch(&elf_ex))
     goto out;
+
+  // Get each elf_phdr in order and deal with it
+  next_usr_phoff = (struct elf_phdr* __user)((uintptr_t)elf_usr_ptr + elf_ex.e_phoff);
+  for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
+
+    // Copy next phdr
+    if(copy_from_user(&elf_phdr_tmp, (void*)next_usr_phoff, sizeof(struct elf_phdr)) != 0){
+      //bad
+      continue;
+    }
+
+    // Create and copy
+    if(elf_phdr_tmp.p_type != PT_LOAD) {
+      pr_warn("keystone runtime includes an inconsistent program header\n");
+      continue;
+    }
+    vaddr = elf_phdr_tmp.p_vaddr;
+    //vaddr sanity check?
+    size = elf_phdr_tmp.p_filesz;
+
+    pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
+
+    epm_alloc_vspace(epm, vaddr, 0x390);
+    retval = keystone_app_load_elf_region(epm,
+					  elf_usr_ptr + elf_phdr_tmp.p_offset,
+					  (void*)vaddr,
+					  size);
+    if(retval != 0){
+      error = retval;
+      goto out;
+    }
+    if(vaddr < *user_offset)
+      *user_offset = vaddr;
+  }
 
   // Get each elf_shdr in order and deal with it
   next_usr_shoff = (struct elf_shdr* __user)((uintptr_t)elf_usr_ptr + elf_ex.e_shoff);
@@ -201,65 +248,39 @@ int keystone_app_load_elf(epm_t* epm, void* __user elf_usr_ptr, size_t len){
       error = retval;
       goto out;
     }
+    if(vaddr < *user_offset)
+      *user_offset = vaddr;
   }
 
-  // Get each elf_phdr in order and deal with it
-  next_usr_phoff = (struct elf_phdr* __user)((uintptr_t)elf_usr_ptr + elf_ex.e_phoff);
-  for(i=0; i<elf_ex.e_phnum; i++, next_usr_phoff++) {
-
-    // Copy next phdr
-    if(copy_from_user(&elf_phdr_tmp, (void*)next_usr_phoff, sizeof(struct elf_phdr)) != 0){
-      //bad
-      continue;
-    }
-
-    // Create and copy
-    if(elf_phdr_tmp.p_type != PT_LOAD) {
-      pr_warn("keystone runtime includes an inconsistent program header\n");
-      continue;
-    }
-    vaddr = elf_phdr_tmp.p_vaddr;
-    //vaddr sanity check?
-    size = elf_phdr_tmp.p_filesz;
-    //pr_info("loading vaddr: %x, sz:%i\n",vaddr,size);
-
-    retval = keystone_app_load_elf_region(epm,
-					  elf_usr_ptr + elf_phdr_tmp.p_offset,
-					  (void*)vaddr,
-					  size);
-    if(retval != 0){
-      error = retval;
-      goto out;
-    }
-  }
-  
 
 
-  
   error = 0;
 
   out:
     return error;
-  
+
 }
 
 
-int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset)
+int keystone_rtld_init_app(enclave_t* enclave, void* __user app_ptr, size_t app_sz, size_t app_stack_sz, unsigned long stack_offset, unsigned long* user_offset)
 {
   unsigned long vaddr;
   int ret;
   epm_t* epm;
   epm = enclave->epm;
 
-  /* setup enclave stack */
-  for (vaddr = stack_offset - PAGE_UP(app_stack_sz); 
-      vaddr < stack_offset; 
-      vaddr += PAGE_SIZE) {
-    epm_alloc_user_page_noexec(epm, vaddr);
-  }
 
   // TODO fix eapp_sz so that its smaller, more accurate. right now its the whole elf
-  ret = keystone_app_load_elf(epm, app_ptr, app_sz);
+  ret = keystone_app_load_elf(epm, app_ptr, app_sz, user_offset);
+
+  /* setup enclave stack */
+  /*
+  for (vaddr = stack_offset - PAGE_UP(app_stack_sz);
+      vaddr < stack_offset;
+      vaddr += PAGE_SIZE) {
+    epm_alloc_user_page_noexec(epm, vaddr);
+  }*/
+
   return ret;
 }
 
@@ -273,6 +294,8 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
   *rt_offset = -1UL;
 
   epm = enclave->epm;
+
+  pr_info("keystone_rtld_init_runtime [size: %ld]\n", rt_sz);
 
   error = -ENOEXEC;
   if(copy_from_user(&elf_ex, rt_ptr, sizeof(struct elfhdr)) != 0){
@@ -307,7 +330,7 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
     keystone_err("failed to copy runtime phdr\n");
     goto out_free_ph;
   }
-  
+
   for(eppnt = elf_phdata, i=0; i<elf_ex.e_phnum; eppnt++, i++) {
     unsigned long vaddr;
     unsigned long size = 0;
@@ -324,10 +347,18 @@ int keystone_rtld_init_runtime(enclave_t* enclave, void* __user rt_ptr, size_t r
     if(size > eppnt->p_memsz) {
       pr_info("unexpected mismatch in elf program header: filesz %ld, memsz %llu\n", size, eppnt->p_memsz);
     }
+    if(epm_alloc_vspace(epm, vaddr, size/PAGE_SIZE + 0xa) != size/PAGE_SIZE + 0xa)
+    {
+      error = -ENOMEM;
+      keystone_err("unable to allocate vspace [0x%lx-0x%lx]\n", vaddr, vaddr+size);
+      goto out_free_ph;
+    }
     rtld_vm_mmap(epm, vaddr, size, rt_ptr, eppnt);
   }
 
-  rtld_setup_stack(epm, -1UL, PAGE_UP(rt_stack_sz));
+  rtld_setup_va_chunk(epm, 0xffffffff80022000, 0xa000);//0x3a7000);
+  //rtld_setup_stack(epm, -1UL, PAGE_UP(rt_stack_sz));
+  //rtld_setup_stack(epm, 0x8040c000, 0x6000);
 
   error = 0;
 out_free_ph:
@@ -336,7 +367,7 @@ out:
   return error;
 }
 
-int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_va, size_t untrusted_size) 
+int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_va, size_t untrusted_size)
 {
   vaddr_t va;
   vaddr_t va_start = PAGE_DOWN((vaddr_t) untrusted_va);
@@ -345,7 +376,7 @@ int keystone_rtld_init_untrusted(enclave_t* enclave, void* untrusted_va, size_t 
   if (va_start != (vaddr_t) untrusted_va)
     keystone_warn("shared buffer address is not aligned to PAGE_SIZE\n");
 
-  for (va = va_start; va < va_end; va += PAGE_SIZE) 
+  for (va = va_start; va < va_end; va += PAGE_SIZE)
   {
     utm_alloc_page(enclave->utm, enclave->epm, va, PTE_D | PTE_A | PTE_R | PTE_W );
   }

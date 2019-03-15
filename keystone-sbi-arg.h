@@ -18,10 +18,11 @@ struct keystone_sbi_create_t
   // Memory regions for the enclave
   struct keystone_sbi_pregion_t epm_region;
   struct keystone_sbi_pregion_t utm_region;
-
+  struct keystone_sbi_pregion_t runtime_region;
+  struct keystone_sbi_pregion_t user_region;
+  struct keystone_sbi_pregion_t free_region;
   // Parameters
   struct runtime_params_t params;
-
   // Outputs from the creation process
   unsigned int* eid_pptr;
 };

@@ -35,7 +35,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   enclave_t* enclave;
 
   /* local variables */
-  unsigned long rt_offset;
+  unsigned long rt_offset, user_offset;
   unsigned long min_pages = calculate_required_pages(user_elf_size, user_stack_size, runtime_elf_size, runtime_stack_size);
   struct utm_t* utm;
   
@@ -45,8 +45,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
     goto error_no_free;
   }
 
-
-  enclave = create_enclave(min_pages);
+  enclave = create_enclave(min_pages*128); //32 MB
   if(enclave == NULL){
     ret = -ENOMEM;
     goto error_no_free;
@@ -60,7 +59,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   }
 
   /* initialize user app */
-  if (keystone_rtld_init_app(enclave, user_elf_ptr, user_elf_size, user_stack_size, rt_offset)) {
+  if (keystone_rtld_init_app(enclave, user_elf_ptr, user_elf_size, user_stack_size, rt_offset, &user_offset)) {
     keystone_err("failed to initialize app\n");
     goto error_destroy_enclave;
   }
@@ -89,6 +88,10 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
   create_args.epm_region.size = enclave->epm->total;
   create_args.utm_region.paddr = __pa(utm->ptr);
   create_args.utm_region.size = utm->size;
+ 
+  create_args.runtime_region.paddr = epm_va_to_pa(enclave->epm, rt_offset);
+  create_args.user_region.paddr = epm_va_to_pa(enclave->epm, user_offset); 
+  create_args.free_region.paddr = epm_get_free_pa(enclave->epm);
 
   create_args.params = enclp->params;
 
@@ -114,7 +117,7 @@ int keystone_create_enclave(struct file* filp, unsigned long arg)
  error_destroy_enclave:
   /* This can handle partial initialization failure */
   destroy_enclave(enclave);
-  
+ 
  error_no_free:
   return ret;
 }

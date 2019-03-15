@@ -44,6 +44,22 @@ void put_free_page(struct list_head* pg_list, vaddr_t page_addr)
   return;
 }
 
+paddr_t epm_get_free_pa(epm_t* epm)
+{
+  struct free_page_t* page;
+  struct list_head* pg_list;
+  paddr_t addr;
+
+  pg_list = &(epm->epm_free_list);
+
+  if(list_empty(pg_list))
+    return 0;
+
+  page = list_first_entry(pg_list, struct free_page_t, freelist);
+  return __pa(page->vaddr);
+}
+
+
 int epm_destroy(epm_t* epm){
 
   /* Clean anything in the free list */
@@ -179,18 +195,18 @@ static pte_t* __ept_walk_internal(struct list_head* pg_list, pte_t* root_page_ta
   for (i = (VA_BITS - RISCV_PGSHIFT) / RISCV_PGLEVEL_BITS - 1; i > 0; i--) {
     size_t idx = pt_idx(addr, i);
     //pr_info("    level %d: pt_idx %d (%x)\n", i, idx, idx);
-    if (unlikely(!(pte_val(t[idx]) & PTE_V)))
+    if (unlikely(!(pte_val(t[idx]) & PTE_V))) {
       return create ? __ept_continue_walk_create(pg_list, root_page_table, addr, &t[idx]) : 0;
+    }
     t = (pte_t*) __va(pte_ppn(t[idx]) << RISCV_PGSHIFT);
   }
   return &t[pt_idx(addr, 0)];
 }
-/*
+
 static pte_t* __ept_walk(struct list_head* pg_list, pte_t* root_page_table, vaddr_t addr)
 {
   return __ept_walk_internal(pg_list, root_page_table, addr, 0);
 }
-*/
 
 static pte_t* __ept_walk_create(struct list_head* pg_list, pte_t* root_page_table, vaddr_t addr)
 {
@@ -205,6 +221,30 @@ static int __ept_va_avail(epm_t* epm, vaddr_t vaddr)
 }
 */
 
+paddr_t epm_va_to_pa(epm_t* epm, vaddr_t addr)
+{
+  pte_t* pte = __ept_walk(NULL, epm->root_page_table,addr);
+  if(pte)
+    return pte_ppn(*pte) << RISCV_PGSHIFT;
+  else
+    return 0;
+}
+
+/* This function pre-allocates the required page tables so that 
+ * the virtual addresses are linearly mapped to the physical memory */
+size_t epm_alloc_vspace(epm_t* epm, vaddr_t addr, size_t num_pages)
+{
+  vaddr_t walk;
+  size_t count;
+  for(walk=addr, count=0; count < num_pages; count++, addr += PAGE_SIZE)
+  {
+    pte_t* pte = __ept_walk_create(&epm->epm_free_list, epm->root_page_table, addr);
+    if(!pte)
+      break;
+  }
+  return count;
+}
+
 vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags)
 {
   pte_t* pte = __ept_walk_create(&epm->epm_free_list, epm->root_page_table, addr);
@@ -216,6 +256,10 @@ vaddr_t utm_alloc_page(utm_t* utm, epm_t* epm, vaddr_t addr, unsigned long flags
 vaddr_t epm_alloc_page(epm_t* epm, vaddr_t addr, unsigned long flags)
 {
   pte_t* pte = __ept_walk_create(&epm->epm_free_list, epm->root_page_table, addr);
+  if(pte_val(*pte) & PTE_V)
+  {
+    return __va(pte_ppn(*pte) << RISCV_PGSHIFT);
+  }
   vaddr_t page_addr = get_free_page(&epm->epm_free_list);
   *pte = pte_create(ppn(page_addr), flags | PTE_V);
   return page_addr;
